@@ -96,14 +96,14 @@ fn add_cluster(
     if !sym_hash_set.contains(&vertex_type_cluster) {
         let canon_graph = CanonGraph::<(), u8, Undirected, usize>::from_edges(&cluster_iso_list);
 
-        match &mut graph_multiplicity.entry(canon_graph) {
+        match &mut graph_multiplicity.entry(canon_graph.clone()) {
             hash_map::Entry::Vacant(_) => {
                 let mut lattice_clone = lattice.clone();
                 lattice_clone.retain(|vertex, _| cluster.contains(vertex));
 
                 sym_hash_set.insert(vertex_type_cluster);
-                graph_multiplicity.insert(canon_graph, 1);
-                graph_bond_info.insert(canon_graph, cluster_iso_list);
+                graph_multiplicity.insert(canon_graph.clone(), 1);
+                graph_bond_info.insert(canon_graph.clone(), cluster_iso_list);
 
                 let mut subgraph_func = |subcluster: &mut HashSet<usize>| {
                     add_subcluster(
@@ -142,11 +142,11 @@ fn add_subcluster(
         .entry(canon_graph)
         .and_modify(|subgraph_info| {
             subgraph_info
-                .entry(sub_canon_graph)
+                .entry(sub_canon_graph.clone())
                 .and_modify(|counter| *counter += 1)
                 .or_insert(1);
         })
-        .or_insert_with(|| HashMap::from([(sub_canon_graph, 1)]));
+        .or_insert_with(|| HashMap::from([(sub_canon_graph.clone(), 1)]));
 }
 
 fn vsimple_vec(
