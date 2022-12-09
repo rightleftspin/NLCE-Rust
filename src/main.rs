@@ -82,10 +82,10 @@ fn add_cluster(
     edge_list: &[Vec<usize>],
     iso_types: &[Vec<u8>],
     sym_types: &[Vec<u32>],
-    graph_multiplicity: &mut HashMap<usize, usize>,
-    subgraph_multiplicity: &mut HashMap<usize, HashMap<usize, usize>>,
-    graph_bond_info: &mut HashMap<usize, Vec<(usize, usize, u8)>>,
-    sym_hash_set: &mut HashSet<usize>,
+    graph_multiplicity: &mut HashMap<CanonGraph<(), u8, Undirected, usize>, usize>,
+    subgraph_multiplicity: &mut HashMap<CanonGraph<(), u8, Undirected, usize>, HashMap<CanonGraph<(), u8, Undirected, usize>, usize>>,
+    graph_bond_info: &mut HashMap<CanonGraph<(), u8, Undirected, usize>, Vec<(usize, usize, u8)>>,
+    sym_hash_set: &mut HashSet<Vec<usize>>,
 ) {
     let mut cluster_vec: Vec<usize> = cluster.iter().cloned().collect();
     cluster_vec.sort();
@@ -93,26 +93,24 @@ fn add_cluster(
     let (cluster_iso_list, vertex_type_cluster) =
         cluster_to_iso_sym(&cluster_vec, edge_list, iso_types, sym_types);
 
-    let sym_hash = sym_to_hash(&vertex_type_cluster);
+    if !sym_hash_set.contains(&vertex_type_cluster) {
+        let canon_graph = CanonGraph::<(), u8, Undirected, usize>::from_edges(&cluster_iso_list);
 
-    if !sym_hash_set.contains(&sym_hash) {
-        let iso_hash = iso_to_hash(&cluster_iso_list);
-
-        match &mut graph_multiplicity.entry(iso_hash) {
+        match &mut graph_multiplicity.entry(canon_graph) {
             hash_map::Entry::Vacant(_) => {
                 let mut lattice_clone = lattice.clone();
                 lattice_clone.retain(|vertex, _| cluster.contains(vertex));
 
-                sym_hash_set.insert(sym_hash);
-                graph_multiplicity.insert(iso_hash, 1);
-                graph_bond_info.insert(iso_hash, cluster_iso_list);
+                sym_hash_set.insert(vertex_type_cluster);
+                graph_multiplicity.insert(canon_graph, 1);
+                graph_bond_info.insert(canon_graph, cluster_iso_list);
 
                 let mut subgraph_func = |subcluster: &mut HashSet<usize>| {
                     add_subcluster(
                         subcluster,
                         edge_list,
                         iso_types,
-                        iso_hash,
+                        canon_graph.clone(),
                         subgraph_multiplicity,
                     )
                 };
@@ -122,7 +120,7 @@ fn add_cluster(
                 }
             }
             hash_map::Entry::Occupied(entry) => {
-                sym_hash_set.insert(sym_hash);
+                sym_hash_set.insert(vertex_type_cluster);
                 *entry.get_mut() += 1;
             }
         };
@@ -133,22 +131,22 @@ fn add_subcluster(
     cluster: &mut HashSet<usize>,
     edge_list: &[Vec<usize>],
     iso_types: &[Vec<u8>],
-    iso_hash: usize,
-    subgraph_multiplicity: &mut HashMap<usize, HashMap<usize, usize>>,
+    canon_graph: CanonGraph<(), u8, Undirected, usize>,
+    subgraph_multiplicity: &mut HashMap<CanonGraph<(), u8, Undirected, usize>, HashMap<CanonGraph<(), u8, Undirected, usize>, usize>>,
 ) {
     let cluster_vec: Vec<usize> = cluster.clone().into_iter().collect();
 
     let subcluster_iso_list = cluster_to_iso(&cluster_vec, edge_list, iso_types);
-    let sub_iso_hash = iso_to_hash(&subcluster_iso_list);
+    let sub_canon_graph = CanonGraph::<(), u8, Undirected, usize>::from_edges(&subcluster_iso_list);
     subgraph_multiplicity
-        .entry(iso_hash)
+        .entry(canon_graph)
         .and_modify(|subgraph_info| {
             subgraph_info
-                .entry(sub_iso_hash)
+                .entry(sub_canon_graph)
                 .and_modify(|counter| *counter += 1)
                 .or_insert(1);
         })
-        .or_insert_with(|| HashMap::from([(sub_iso_hash, 1)]));
+        .or_insert_with(|| HashMap::from([(sub_canon_graph, 1)]));
 }
 
 fn vsimple_vec(
@@ -308,10 +306,10 @@ fn main() {
         .zip(edge_list.iter().cloned())
         .collect();
 
-    let mut graph_mult = HashMap::<usize, usize>::new();
-    let mut subgraph_mult = HashMap::<usize, HashMap<usize, usize>>::new();
-    let mut graph_bond = HashMap::<usize, Vec<(usize, usize, u8)>>::new();
-    let mut sym_hash = HashSet::<usize>::new();
+    let mut graph_mult = HashMap::<CanonGraph<(), u8, Undirected, usize>, usize>::new();
+    let mut subgraph_mult = HashMap::<CanonGraph<(), u8, Undirected, usize>, HashMap<CanonGraph<(), u8, Undirected, usize>, usize>>::new();
+    let mut graph_bond = HashMap::<CanonGraph<(), u8, Undirected, usize>, Vec<(usize, usize, u8)>>::new();
+    let mut sym_hash = HashSet::<Vec<usize>>::new();
 
     let mut graph_func = |cluster: &mut HashSet<usize>| {
         add_cluster(
