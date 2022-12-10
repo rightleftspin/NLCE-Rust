@@ -77,7 +77,7 @@ fn sym_to_hash(vertex_type_cluster: &[usize]) -> usize {
 }
 
 fn add_cluster(
-    cluster: &mut HashSet<usize>,
+    mut cluster: Vec<usize>,
     lattice: &HashMap<usize, Vec<usize>>,
     edge_list: &[Vec<usize>],
     iso_types: &[Vec<u8>],
@@ -87,11 +87,9 @@ fn add_cluster(
     graph_bond_info: &mut HashMap<usize, Vec<(usize, usize, u8)>>,
     sym_hash_set: &mut HashSet<usize>,
 ) {
-    let mut cluster_vec: Vec<usize> = cluster.iter().cloned().collect();
-    cluster_vec.sort();
-
+    cluster.sort();
     let (cluster_iso_list, vertex_type_cluster) =
-        cluster_to_iso_sym(&cluster_vec, edge_list, iso_types, sym_types);
+        cluster_to_iso_sym(&cluster, edge_list, iso_types, sym_types);
 
     let sym_hash = sym_to_hash(&vertex_type_cluster);
 
@@ -107,7 +105,7 @@ fn add_cluster(
                 graph_multiplicity.insert(iso_hash, 1);
                 graph_bond_info.insert(iso_hash, cluster_iso_list);
 
-                let mut subgraph_func = |subcluster: &mut HashSet<usize>| {
+                let mut subgraph_func = |subcluster: Vec<usize>| {
                     add_subcluster(
                         subcluster,
                         edge_list,
@@ -117,8 +115,8 @@ fn add_cluster(
                     )
                 };
 
-                for size in 2..cluster_vec.len() {
-                    enumerate_vec(&lattice_clone, size, &cluster_vec, &mut subgraph_func);
+                for size in 2..cluster.len() {
+                    enumerate(lattice.len(), &lattice_clone, size, &cluster, &mut subgraph_func);
                 }
             }
             hash_map::Entry::Occupied(entry) => {
@@ -130,15 +128,14 @@ fn add_cluster(
 }
 
 fn add_subcluster(
-    cluster: &mut HashSet<usize>,
+    cluster: Vec<usize>,
     edge_list: &[Vec<usize>],
     iso_types: &[Vec<u8>],
     iso_hash: usize,
     subgraph_multiplicity: &mut HashMap<usize, HashMap<usize, usize>>,
 ) {
-    let cluster_vec: Vec<usize> = cluster.clone().into_iter().collect();
 
-    let subcluster_iso_list = cluster_to_iso(&cluster_vec, edge_list, iso_types);
+    let subcluster_iso_list = cluster_to_iso(&cluster, edge_list, iso_types);
     let sub_iso_hash = iso_to_hash(&subcluster_iso_list);
     subgraph_multiplicity
         .entry(iso_hash)
@@ -151,56 +148,71 @@ fn add_subcluster(
         .or_insert_with(|| HashMap::from([(sub_iso_hash, 1)]));
 }
 
-fn vsimple_vec(
-    edge_list: &HashMap<usize, Vec<usize>>,
-    subgraph: &mut HashSet<usize>,
+fn vsimple(
+    edge_map: &HashMap<usize, Vec<usize>>,
+    subgraph_bool: &mut Vec<bool>,
+    subgraph: &mut Vec<usize>,
+    neighbors_bool: &mut Vec<bool>,
     neighbors: &mut Vec<usize>,
+    guarding_set_bool: &Vec<bool>,
     guarding_set: &HashSet<usize>,
     size: usize,
-    graph_func: &mut dyn FnMut(&mut HashSet<usize>),
+    graph_func: &mut dyn FnMut(Vec<usize>),
 ) -> bool {
+
     if subgraph.len() == size {
-        graph_func(subgraph);
+        graph_func(subgraph.clone());
         return true;
     };
 
     let mut has_int_leaf = false;
 
-    let mut guarding_set_clone = guarding_set.clone();
+    let mut new_guarding_set = guarding_set.clone();
+    let mut new_guarding_set_bool = guarding_set_bool.clone();
 
     while !neighbors.is_empty() {
         let neighbor = neighbors.pop().unwrap();
+        neighbors_bool[neighbor] = false;
 
-        if edge_list.contains_key(&neighbor) {
-            subgraph.insert(neighbor);
+        if edge_map.contains_key(&neighbor) {
+            subgraph_bool[neighbor] = true;
+            subgraph.push(neighbor);
 
             let mut new_neighbors = neighbors.clone();
-            let full_guard: HashSet<usize> = subgraph.union(&guarding_set_clone).cloned().collect();
-            let add_neighbors = edge_list[&neighbor]
-                .iter()
-                .cloned()
-                .filter(|&vertex| !full_guard.contains(&vertex) & !neighbors.contains(&vertex));
+            let mut new_neighbors_bool = neighbors_bool.clone();
 
-            new_neighbors.extend(add_neighbors);
+            for &vertex in edge_map[&neighbor].iter() {
+               if !new_guarding_set_bool[vertex] & !new_neighbors_bool[vertex] & !subgraph_bool[vertex] {
+                   new_neighbors.push(vertex);
+                   new_neighbors_bool[vertex] = true;
+               }
+            };
 
-            if vsimple_vec(
-                edge_list,
+            if vsimple(
+                edge_map,
+                subgraph_bool,
                 subgraph,
+                &mut new_neighbors_bool,
                 &mut new_neighbors,
-                &guarding_set_clone,
+                &new_guarding_set_bool,
+                &new_guarding_set,
                 size,
                 graph_func,
             ) {
-                subgraph.remove(&neighbor);
+            subgraph.pop();
+            subgraph_bool[neighbor] = false;
                 has_int_leaf = true;
             } else {
-                subgraph.remove(&neighbor);
+            subgraph.pop();
+            subgraph_bool[neighbor] = false;
                 return has_int_leaf;
             };
 
-            guarding_set_clone.insert(neighbor);
 
-            if (edge_list.len() - guarding_set_clone.len()) < size {
+            new_guarding_set.insert(neighbor);
+            new_guarding_set_bool[neighbor] = true;
+
+            if (edge_map.len() - new_guarding_set.len()) < size {
                 return has_int_leaf;
             };
         };
@@ -209,25 +221,29 @@ fn vsimple_vec(
     has_int_leaf
 }
 
-fn enumerate_vec(
-    edge_list: &HashMap<usize, Vec<usize>>,
+fn enumerate(
+    underlying_size: usize,
+    edge_map: &HashMap<usize, Vec<usize>>,
     size: usize,
     starting_vertices: &Vec<usize>,
-    mut graph_func: &mut dyn FnMut(&mut HashSet<usize>),
+    mut graph_func: &mut dyn FnMut(Vec<usize>),
 ) {
     let mut guarding_set = HashSet::<usize>::new();
 
     for vertex in starting_vertices {
-        let mut neighbors = edge_list[vertex]
+        let mut neighbors: Vec<usize> = edge_map[vertex]
             .iter()
             .cloned()
             .filter(|vertex| !guarding_set.contains(vertex))
             .collect();
-        let mut starting_subgraph = HashSet::from([*vertex]);
-        vsimple_vec(
-            edge_list,
+        let mut starting_subgraph = vec![*vertex];
+        vsimple(
+            edge_map,
+            &mut vec![false; underlying_size],
             &mut starting_subgraph,
+            &mut vec![false; underlying_size].iter().enumerate().map(|(index, _)| neighbors.contains(&index)).collect(),
             &mut neighbors,
+            &vec![false; underlying_size].iter().enumerate().map(|(index, _)| guarding_set.contains(&index)).collect(),
             &guarding_set,
             size,
             &mut graph_func,
@@ -313,7 +329,7 @@ fn main() {
     let mut graph_bond = HashMap::<usize, Vec<(usize, usize, u8)>>::new();
     let mut sym_hash = HashSet::<usize>::new();
 
-    let mut graph_func = |cluster: &mut HashSet<usize>| {
+    let mut graph_func = |cluster: Vec<usize>| {
         add_cluster(
             cluster,
             &cluster_set,
@@ -330,7 +346,7 @@ fn main() {
     use std::time::Instant;
     let now = Instant::now();
 
-    enumerate_vec(&cluster_set, cluster_size, &vec![start], &mut graph_func);
+    enumerate(cluster_set.len(), &cluster_set, cluster_size, &vec![start], &mut graph_func);
 
     let elapsed = now.elapsed();
     println!("Elapsed: {:.2?}", elapsed);
